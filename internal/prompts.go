@@ -9,7 +9,7 @@ import (
 )
 
 func handlerExplainPipelineError(ctx context.Context, request mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
-	return nil, errors.New("Not Implemented yet")
+	return nil, errors.New("not Implemented yet")
 }
 
 func AddPrompts(s *server.MCPServer) {
