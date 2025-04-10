@@ -1,4 +1,8 @@
 
+.PHONY: build
+build:
+	go build -v .
+
 .PHONY: inspect
-inspect:
-	npx @modelcontextprotocol/inspector go run .
+inspect: build
+	npx @modelcontextprotocol/inspector@0.7.0 ./mcp-tekton
