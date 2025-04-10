@@ -3,100 +3,187 @@ package internal
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"log/slog"
-	"sync"
+	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
-	v1 "github.com/tektoncd/pipeline/pkg/apis/pipeline/v1"
+	pipelineinformer "github.com/tektoncd/pipeline/pkg/client/injection/informers/pipeline/v1/pipeline"
 	pipelineruninformer "github.com/tektoncd/pipeline/pkg/client/injection/informers/pipeline/v1/pipelinerun"
-	"k8s.io/client-go/tools/cache"
+	taskinformer "github.com/tektoncd/pipeline/pkg/client/injection/informers/pipeline/v1/task"
+	taskruninformer "github.com/tektoncd/pipeline/pkg/client/injection/informers/pipeline/v1/taskrun"
+	// stepactioninformer "github.com/tektoncd/pipeline/pkg/client/injection/informers/pipeline/v1beta1/stepaction"
 )
 
-type resources struct {
-	prlock      sync.RWMutex
-	pipelineRun map[string]*v1.PipelineRun
+func AddResources(ctx context.Context, s *server.MCPServer) {
+	s.AddResourceTemplate(GetPipelineRunResourceContent(ctx))
+	s.AddResourceTemplate(GetTaskRunResourceContent(ctx))
+	s.AddResourceTemplate(GetPipelineResourceContent(ctx))
+	s.AddResourceTemplate(GetTaskResourceContent(ctx))
+	// s.AddResourceTemplate(GetStepActionResourceContent(ctx))
 }
 
-func (r *resources) AddPipelineRun(name string, pipelineRun *v1.PipelineRun) {
-	r.prlock.Lock()
-	defer r.prlock.Unlock()
-	r.pipelineRun[name] = pipelineRun
+func GetPipelineRunResourceContent(ctx context.Context) (mcp.ResourceTemplate, server.ResourceTemplateHandlerFunc) {
+	return mcp.NewResourceTemplate(
+		"tekton://pipelineRun/{namespace}/{name}",
+		"PipelineRun",
+	), TektonResourceContentHandler(ctx)
 }
 
-func (r *resources) UpdatePipelineRun(name string, pipelineRun *v1.PipelineRun) {
-	r.prlock.Lock()
-	defer r.prlock.Unlock()
-	r.pipelineRun[name] = pipelineRun
+func GetTaskRunResourceContent(ctx context.Context) (mcp.ResourceTemplate, server.ResourceTemplateHandlerFunc) {
+	return mcp.NewResourceTemplate(
+		"tekton://taskRun/{namespace}/{name}",
+		"TaskRun",
+	), TektonResourceContentHandler(ctx)
 }
 
-func (r *resources) RemovePipelineRun(name string) {
-	r.prlock.Lock()
-	defer r.prlock.Unlock()
-	delete(r.pipelineRun, name)
+func GetPipelineResourceContent(ctx context.Context) (mcp.ResourceTemplate, server.ResourceTemplateHandlerFunc) {
+	return mcp.NewResourceTemplate(
+		"tekton://pipeline/{namespace}/{name}",
+		"Pipeline",
+	), TektonResourceContentHandler(ctx)
 }
 
-func (r *resources) handlerPipelineRun(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
-	r.prlock.RLock()
-	defer r.prlock.RUnlock()
-	uri := request.Params.URI
-	pr, ok := r.pipelineRun[uri]
+func GetTaskResourceContent(ctx context.Context) (mcp.ResourceTemplate, server.ResourceTemplateHandlerFunc) {
+	return mcp.NewResourceTemplate(
+		"tekton://task/{namespace}/{name}",
+		"Task",
+	), TektonResourceContentHandler(ctx)
+}
 
-	if !ok {
-		return nil, fmt.Errorf("PipelineRun %s not found", request.Params.URI)
+func GetStepActionResourceContent(ctx context.Context) (mcp.ResourceTemplate, server.ResourceTemplateHandlerFunc) {
+	return mcp.NewResourceTemplate(
+		"tekton://stepaction/{namespace}/{name}",
+		"StepAction",
+	), TektonResourceContentHandler(ctx)
+}
+
+func TektonResourceContentHandler(ctx context.Context) server.ResourceTemplateHandlerFunc {
+	return func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+		ns, ok := request.Params.Arguments["namespace"].([]string)
+		if !ok || len(ns) == 0 {
+			return nil, errors.New("namespace is required")
+		}
+		namespace := ns[0]
+
+		n, ok := request.Params.Arguments["name"].([]string)
+		if !ok || len(n) == 0 {
+			return nil, errors.New("name is required")
+		}
+		name := n[0]
+
+		uri := request.Params.URI
+		resourceType := strings.Split(uri, "/")[2]
+
+		var jsonData []byte
+		var err error
+
+		switch resourceType {
+		case "pipelinerun":
+			jsonData, err = getPipelineRun(ctx, namespace, name)
+			if err != nil {
+				return nil, fmt.Errorf("failed to get PipelineRun %s/%s: %w", namespace, name, err)
+			}
+		case "taskrun":
+			jsonData, err = getTaskRun(ctx, namespace, name)
+			if err != nil {
+				return nil, fmt.Errorf("failed to get TaskRun %s/%s: %w", namespace, name, err)
+			}
+		case "pipeline":
+			jsonData, err = getPipeline(ctx, namespace, name)
+			if err != nil {
+				return nil, fmt.Errorf("failed to get Pipeline %s/%s: %w", namespace, name, err)
+			}
+		case "task":
+			jsonData, err = getTask(ctx, namespace, name)
+			if err != nil {
+				return nil, fmt.Errorf("failed to get Task %s/%s: %w", namespace, name, err)
+			}
+			// case "stepaction":
+			// 	jsonData, err = getStepAction(ctx, namespace, name)
+			// 	if err != nil {
+			// 		return nil, fmt.Errorf("failed to get StepAction %s/%s: %w", namespace, name, err)
+			// 	}
+		}
+
+		contentType := fmt.Sprintf("application/json;type=%s", resourceType)
+		contents := mcp.TextResourceContents{
+			URI:      uri,
+			MIMEType: contentType,
+			Text:     string(jsonData),
+		}
+
+		return []mcp.ResourceContents{contents}, nil
+	}
+}
+
+func getPipelineRun(ctx context.Context, namespace string, name string) ([]byte, error) {
+	pipelineRunInformer := pipelineruninformer.Get(ctx)
+	pipelineRun, err := pipelineRunInformer.Lister().PipelineRuns(namespace).Get(name)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get PipelineRun %s/%s: %w", namespace, name, err)
 	}
 
-	// Convert the result to JSON
-	jsonData, err := json.Marshal(pr)
+	jsonData, err := json.Marshal(pipelineRun)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal resource to JSON: %w", err)
 	}
-
-	// Create resource contents
-	contentType := fmt.Sprintf("application/json;type=%s", "pipelinerun")
-	contents := mcp.TextResourceContents{
-		URI:      uri,
-		MIMEType: contentType,
-		Text:     string(jsonData),
-	}
-
-	return []mcp.ResourceContents{contents}, nil
+	return jsonData, nil
 }
 
-func AddResources(ctx context.Context, s *server.MCPServer) {
-	r := &resources{
-		prlock:      sync.RWMutex{},
-		pipelineRun: make(map[string]*v1.PipelineRun),
+func getTaskRun(ctx context.Context, namespace string, name string) ([]byte, error) {
+	taskRunInformer := taskruninformer.Get(ctx)
+	taskRun, err := taskRunInformer.Lister().TaskRuns(namespace).Get(name)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get TaskRun %s/%s: %w", namespace, name, err)
 	}
-	pipelineRunInformer := pipelineruninformer.Get(ctx)
-	if _, err := pipelineRunInformer.Informer().AddEventHandler(updatePipelineRunResource(r, s)); err != nil {
-		slog.Error(fmt.Sprintf("Couldn't register PipelineRun informer event handler: %v\n", err))
+
+	jsonData, err := json.Marshal(taskRun)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal resource to JSON: %w", err)
 	}
+	return jsonData, nil
 }
 
-func updatePipelineRunResource(r *resources, s *server.MCPServer) cache.ResourceEventHandler {
-	h := func(obj interface{}) {
-		pipelineRun := obj.(*v1.PipelineRun)
-		uri := fmt.Sprintf("tekton://%s/pipelinerun/%s", pipelineRun.Namespace, pipelineRun.Name)
-		resource := mcp.Resource{
-			URI:  uri,
-			Name: pipelineRun.Name,
-		}
-		slog.Info(fmt.Sprintf("Updating resource: %s\n", pipelineRun.Name))
-		s.AddResource(resource, r.handlerPipelineRun)
-		r.AddPipelineRun(uri, pipelineRun)
+func getPipeline(ctx context.Context, namespace string, name string) ([]byte, error) {
+	pipelineInformer := pipelineinformer.Get(ctx)
+	pipeline, err := pipelineInformer.Lister().Pipelines(namespace).Get(name)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get Pipeline %s/%s: %w", namespace, name, err)
 	}
-	dh := func(obj interface{}) {
-		pipelineRun := obj.(*v1.PipelineRun)
-		slog.Info(fmt.Sprintf("Removing resource: %s\n", pipelineRun.Name))
-		r.RemovePipelineRun(pipelineRun.Name)
+
+	jsonData, err := json.Marshal(pipeline)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal resource to JSON: %w", err)
 	}
-	return cache.ResourceEventHandlerFuncs{
-		AddFunc: h,
-		UpdateFunc: func(first, second interface{}) {
-			h(second)
-		},
-		DeleteFunc: dh,
-	}
+	return jsonData, nil
 }
+
+func getTask(ctx context.Context, namespace string, name string) ([]byte, error) {
+	taskInformer := taskinformer.Get(ctx)
+	task, err := taskInformer.Lister().Tasks(namespace).Get(name)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get Task %s/%s: %w", namespace, name, err)
+	}
+
+	jsonData, err := json.Marshal(task)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal resource to JSON: %w", err)
+	}
+	return jsonData, nil
+}
+
+// func getStepAction(ctx context.Context, namespace string, name string) ([]byte, error) {
+// 	stepActionInformer := stepactioninformer.Get(ctx)
+// 	stepAction, err := stepActionInformer.Lister().StepActions(namespace).Get(name)
+// 	if err != nil {
+// 		return nil, fmt.Errorf("failed to get StepAction %s/%s: %w", namespace, name, err)
+// 	}
+//
+// 	jsonData, err := json.Marshal(stepAction)
+// 	if err != nil {
+// 		return nil, fmt.Errorf("failed to marshal resource to JSON: %w", err)
+// 	}
+// 	return jsonData, nil
+// }
