@@ -10,12 +10,12 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 	v1 "github.com/tektoncd/pipeline/pkg/apis/pipeline/v1"
-	tektoncs "github.com/tektoncd/pipeline/pkg/client/clientset/versioned"
+	pipelineclient "github.com/tektoncd/pipeline/pkg/client/injection/client"
+	pipelinerinformer "github.com/tektoncd/pipeline/pkg/client/injection/informers/pipeline/v1/pipeline"
 	pipelineruninformer "github.com/tektoncd/pipeline/pkg/client/injection/informers/pipeline/v1/pipelinerun"
 	taskruninformer "github.com/tektoncd/pipeline/pkg/client/injection/informers/pipeline/v1/taskrun"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
-	"k8s.io/client-go/tools/clientcmd"
 )
 
 func toolStartPipeline() mcp.Tool {
@@ -39,22 +39,10 @@ func handlerStartPipeline(ctx context.Context, request mcp.CallToolRequest) (*mc
 	}
 	namespace, _ := request.Params.Arguments["namespace"].(string)
 
-	// Get Kubernetes config
-	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
-	configOverrides := &clientcmd.ConfigOverrides{}
-	kubeConfig := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loadingRules, configOverrides)
-	config, err := kubeConfig.ClientConfig()
-	if err != nil {
-		return mcpError(fmt.Errorf("failed to get Kubernetes config: %w", err).Error()), nil
-	}
+	pipelineInformer := pipelinerinformer.Get(ctx)
+	pipelineclientset := pipelineclient.Get(ctx)
 
-	// Create Tekton clientset
-	tektonClient, err := tektoncs.NewForConfig(config)
-	if err != nil {
-		return mcpError(fmt.Errorf("failed to create Tekton client: %w", err).Error()), nil
-	}
-
-	if _, err := tektonClient.TektonV1().Pipelines(namespace).Get(ctx, name, metav1.GetOptions{}); err != nil {
+	if _, err := pipelineInformer.Lister().Pipelines(namespace).Get(name); err != nil {
 		return mcpError(fmt.Sprintf("Failed to get Pipeline %s/%s: %v", namespace, name, err)), nil
 	}
 
@@ -74,7 +62,7 @@ func handlerStartPipeline(ctx context.Context, request mcp.CallToolRequest) (*mc
 		},
 	}
 
-	if _, err := tektonClient.TektonV1().PipelineRuns(namespace).Create(ctx, pr, metav1.CreateOptions{}); err != nil {
+	if _, err := pipelineclientset.TektonV1().PipelineRuns(namespace).Create(ctx, pr, metav1.CreateOptions{}); err != nil {
 		return mcpError(fmt.Sprintf("Failed to create PipelineRun %s/%s: %v", namespace, name, err)), nil
 	}
 
