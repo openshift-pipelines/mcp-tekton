@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -13,7 +14,7 @@ import (
 	pipelineruninformer "github.com/tektoncd/pipeline/pkg/client/injection/informers/pipeline/v1/pipelinerun"
 	taskinformer "github.com/tektoncd/pipeline/pkg/client/injection/informers/pipeline/v1/task"
 	taskruninformer "github.com/tektoncd/pipeline/pkg/client/injection/informers/pipeline/v1/taskrun"
-	// stepactioninformer "github.com/tektoncd/pipeline/pkg/client/injection/informers/pipeline/v1beta1/stepaction"
+	stepactioninformer "github.com/tektoncd/pipeline/pkg/client/injection/informers/pipeline/v1beta1/stepaction"
 )
 
 func AddResources(ctx context.Context, s *server.MCPServer) {
@@ -21,19 +22,19 @@ func AddResources(ctx context.Context, s *server.MCPServer) {
 	s.AddResourceTemplate(GetTaskRunResourceContent(ctx))
 	s.AddResourceTemplate(GetPipelineResourceContent(ctx))
 	s.AddResourceTemplate(GetTaskResourceContent(ctx))
-	// s.AddResourceTemplate(GetStepActionResourceContent(ctx))
+	s.AddResourceTemplate(GetStepActionResourceContent(ctx))
 }
 
 func GetPipelineRunResourceContent(ctx context.Context) (mcp.ResourceTemplate, server.ResourceTemplateHandlerFunc) {
 	return mcp.NewResourceTemplate(
-		"tekton://pipelineRun/{namespace}/{name}",
+		"tekton://pipelinerun/{namespace}/{name}",
 		"PipelineRun",
 	), TektonResourceContentHandler(ctx)
 }
 
 func GetTaskRunResourceContent(ctx context.Context) (mcp.ResourceTemplate, server.ResourceTemplateHandlerFunc) {
 	return mcp.NewResourceTemplate(
-		"tekton://taskRun/{namespace}/{name}",
+		"tekton://taskrun/{namespace}/{name}",
 		"TaskRun",
 	), TektonResourceContentHandler(ctx)
 }
@@ -79,6 +80,8 @@ func TektonResourceContentHandler(ctx context.Context) server.ResourceTemplateHa
 		var jsonData []byte
 		var err error
 
+		slog.Info(fmt.Sprintf("Resource: %s, %s/%s", resourceType, namespace, name))
+
 		switch resourceType {
 		case "pipelinerun":
 			jsonData, err = getPipelineRun(ctx, namespace, name)
@@ -100,11 +103,11 @@ func TektonResourceContentHandler(ctx context.Context) server.ResourceTemplateHa
 			if err != nil {
 				return nil, fmt.Errorf("failed to get Task %s/%s: %w", namespace, name, err)
 			}
-			// case "stepaction":
-			// 	jsonData, err = getStepAction(ctx, namespace, name)
-			// 	if err != nil {
-			// 		return nil, fmt.Errorf("failed to get StepAction %s/%s: %w", namespace, name, err)
-			// 	}
+		case "stepaction":
+			jsonData, err = getStepAction(ctx, namespace, name)
+			if err != nil {
+				return nil, fmt.Errorf("failed to get StepAction %s/%s: %w", namespace, name, err)
+			}
 		}
 
 		contentType := fmt.Sprintf("application/json;type=%s", resourceType)
@@ -124,6 +127,7 @@ func getPipelineRun(ctx context.Context, namespace string, name string) ([]byte,
 	if err != nil {
 		return nil, fmt.Errorf("failed to get PipelineRun %s/%s: %w", namespace, name, err)
 	}
+	slog.Info(fmt.Sprintf("PipelineRun %s: %v", pipelineRun.Name, pipelineRun))
 
 	jsonData, err := json.Marshal(pipelineRun)
 	if err != nil {
@@ -174,16 +178,16 @@ func getTask(ctx context.Context, namespace string, name string) ([]byte, error)
 	return jsonData, nil
 }
 
-// func getStepAction(ctx context.Context, namespace string, name string) ([]byte, error) {
-// 	stepActionInformer := stepactioninformer.Get(ctx)
-// 	stepAction, err := stepActionInformer.Lister().StepActions(namespace).Get(name)
-// 	if err != nil {
-// 		return nil, fmt.Errorf("failed to get StepAction %s/%s: %w", namespace, name, err)
-// 	}
-//
-// 	jsonData, err := json.Marshal(stepAction)
-// 	if err != nil {
-// 		return nil, fmt.Errorf("failed to marshal resource to JSON: %w", err)
-// 	}
-// 	return jsonData, nil
-// }
+func getStepAction(ctx context.Context, namespace string, name string) ([]byte, error) {
+	stepActionInformer := stepactioninformer.Get(ctx)
+	stepAction, err := stepActionInformer.Lister().StepActions(namespace).Get(name)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get StepAction %s/%s: %w", namespace, name, err)
+	}
+
+	jsonData, err := json.Marshal(stepAction)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal resource to JSON: %w", err)
+	}
+	return jsonData, nil
+}
