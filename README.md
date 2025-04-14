@@ -8,4 +8,9 @@ This is a proof of concept of a [Model Context Protocol](https://modelcontextpro
 - https://github.com/Flux159/mcp-server-kubernetes/blob/main/src/resources/handlers.ts
 - https://github.com/ckreiling/mcp-server-docker/blob/main/src/mcp_server_docker/server.py
 - https://github.com/ckreiling/mcp-server-docker/blob/main/src/mcp_server_docker/server.py
-  
+
+## To-dos
+
+- Go from listing some `PipelineRun` (or other objects) and then inspect it.
+  - a tool to list / filter
+  - a resource to inspect one
