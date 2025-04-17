@@ -3,7 +3,7 @@ module github.com/openshift-pipelines/mcp-tekton
 go 1.24.0
 
 require (
-	github.com/mark3labs/mcp-go v0.18.0
+	github.com/mark3labs/mcp-go v0.20.1
 	github.com/tektoncd/pipeline v0.70.0
 	k8s.io/apimachinery v0.32.3
 	k8s.io/client-go v0.32.3
