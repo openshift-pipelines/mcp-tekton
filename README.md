@@ -1,4 +1,7 @@
-# mcp-tekton: a Tekton Model Context Protocol Server
+# ARCHIVED: mcp-tekton: a Tekton Model Context Protocol Server
+
+> [!IMPORTANT]
+> This repository is archived and work on a Tekton MCP server is happening [upstream](https://tekton.dev), in [`tektoncd/mcp-server`](https://github.com/tektoncd/mcp-server)
 
 This is a proof of concept of a [Model Context Protocol](https://modelcontextprotocol.io/introduction) for Tetkon.
 
